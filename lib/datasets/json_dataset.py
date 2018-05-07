@@ -177,20 +177,29 @@ class JsonDataset(object):
                     p for p in obj['segmentation'] if len(p) >= 6
                 ]
             if obj['area'] < cfg.TRAIN.GT_MIN_AREA:
+                print('skipping for area', obj['area'])
                 continue
             if 'ignore' in obj and obj['ignore'] == 1:
+                print('skipping for ignore', obj['ignore'])
                 continue
             # Convert form (x1, y1, w, h) to (x1, y1, x2, y2)
             x1, y1, x2, y2 = box_utils.xywh_to_xyxy(obj['bbox'])
+
             x1, y1, x2, y2 = box_utils.clip_xyxy_to_image(
                 x1, y1, x2, y2, height, width
             )
             # Require non-zero seg area and more than 1x1 box size
-            if obj['area'] > 0 and x2 > x1 and y2 > y1:
+            if obj['area'] > 0: # and x2 > x1 and y2 > y1:
                 obj['clean_bbox'] = [x1, y1, x2, y2]
                 valid_objs.append(obj)
                 valid_segms.append(obj['segmentation'])
+            else:
+                print((x1,y1,x2, y2), obj['bbox'], height, width)
+
         num_valid_objs = len(valid_objs)
+
+        # print(entry, num_valid_objs, len(objs))
+        assert num_valid_objs == len(objs)
 
         boxes = np.zeros((num_valid_objs, 4), dtype=entry['boxes'].dtype)
         gt_classes = np.zeros((num_valid_objs), dtype=entry['gt_classes'].dtype)

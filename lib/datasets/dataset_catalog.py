@@ -37,6 +37,90 @@ RAW_DIR = 'raw_dir'
 
 # Available datasets
 DATASETS = {
+   'nuclei_stage1_train': {
+        IM_DIR:
+            _DATA_DIR + '/Nuclei/stage_1_train',
+        ANN_FN:
+            _DATA_DIR + '/Nuclei/annotations/stage1_train.json'
+    },
+    'nuclei_stage_1_local_train_split': {
+        IM_DIR:
+            _DATA_DIR + '/Nuclei/stage_1_train',
+        ANN_FN:
+            _DATA_DIR + '/Nuclei/annotations/stage_1_local_train_split.json'
+    },
+    'nuclei_stage_1_local_val_split': {
+        IM_DIR:
+            _DATA_DIR + '/Nuclei/stage_1_train',
+        ANN_FN:
+            _DATA_DIR + '/Nuclei/annotations/stage_1_local_val_split.json'
+    },
+    'nuclei_stage_1_test': {
+        IM_DIR:
+            _DATA_DIR + '/Nuclei/stage_1_test',
+        ANN_FN:
+            _DATA_DIR + '/Nuclei/annotations/stage_1_test.json'
+    },
+    'nuclei_stage_2_test': {
+        IM_DIR:
+            _DATA_DIR + '/Nuclei/stage_2_test',
+        ANN_FN:
+            _DATA_DIR + '/Nuclei/annotations/stage_2_test.json'
+    },
+    'cluster_nuclei': {
+        IM_DIR:
+            _DATA_DIR + '/Nuclei/cluster_nuclei',
+        ANN_FN:
+            _DATA_DIR + '/Nuclei/annotations/cluster_nuclei.json'
+    },
+    'BBBC007': {
+        IM_DIR:
+            _DATA_DIR + '/Nuclei/BBBC007',
+        ANN_FN:
+            _DATA_DIR + '/Nuclei/annotations/BBBC007.json'
+    },
+    'BBBC006': {
+        IM_DIR:
+            _DATA_DIR + '/Nuclei/BBBC006',
+        ANN_FN:
+            _DATA_DIR + '/Nuclei/annotations/BBBC006.json'
+    },
+    'BBBC018': {
+        IM_DIR:
+            _DATA_DIR + '/Nuclei/BBBC018',
+        ANN_FN:
+            _DATA_DIR + '/Nuclei/annotations/BBBC018.json'
+    },
+    'BBBC020': {
+        IM_DIR:
+            _DATA_DIR + '/Nuclei/BBBC020',
+        ANN_FN:
+            _DATA_DIR + '/Nuclei/annotations/BBBC020.json'
+    },
+    'nucleisegmentationbenchmark': {
+        IM_DIR:
+            _DATA_DIR + '/Nuclei/nucleisegmentationbenchmark',
+        ANN_FN:
+            _DATA_DIR + '/Nuclei/annotations/nucleisegmentationbenchmark.json'
+    },
+    '2009_ISBI_2DNuclei': {
+        IM_DIR:
+            _DATA_DIR + '/Nuclei/2009_ISBI_2DNuclei',
+        ANN_FN:
+            _DATA_DIR + '/Nuclei/annotations/2009_ISBI_2DNuclei.json'
+    },
+    'nuclei_partial_annotations': {
+        IM_DIR:
+            _DATA_DIR + '/Nuclei/nuclei_partial_annotations',
+        ANN_FN:
+            _DATA_DIR + '/Nuclei/annotations/nuclei_partial_annotations.json'
+    },
+    'TNBC_NucleiSegmentation': {
+        IM_DIR:
+            _DATA_DIR + '/Nuclei/TNBC_NucleiSegmentation',
+        ANN_FN:
+            _DATA_DIR + '/Nuclei/annotations/TNBC_NucleiSegmentation.json'
+    },
     'cityscapes_fine_instanceonly_seg_train': {
         IM_DIR:
             _DATA_DIR + '/cityscapes/images',
