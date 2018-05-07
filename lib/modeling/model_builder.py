@@ -382,7 +382,7 @@ def add_training_inputs(model, roidb=None):
     if roidb is not None:
         # To make debugging easier you can set cfg.DATA_LOADER.NUM_THREADS = 1
         model.roi_data_loader = RoIDataLoader(
-            roidb, num_loaders=cfg.DATA_LOADER.NUM_THREADS
+            roidb, num_loaders=cfg.DATA_LOADER.NUM_THREADS, num_augmentation_processes=cfg.DATA_LOADER.PROCESS_POOL_COUNT
         )
     orig_num_op = len(model.net._net.op)
     blob_names = roi_data.minibatch.get_minibatch_blob_names(
