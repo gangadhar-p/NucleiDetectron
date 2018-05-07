@@ -56,5 +56,8 @@ ext_modules = [
 
 setup(
     name='Detectron',
-    ext_modules=cythonize(ext_modules)
+    ext_modules=cythonize(ext_modules), install_requires=['scipy',
+                                                          'scikit-image',
+                                                          'numpy',
+                                                          'opencv-python']
 )
