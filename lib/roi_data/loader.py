@@ -43,12 +43,16 @@ from __future__ import unicode_literals
 from collections import deque
 from collections import OrderedDict
 import logging
+from multiprocessing import Pool
+from multiprocessing import Queue as MPQueue
+
 import numpy as np
 import Queue
 import signal
 import threading
 import time
 import uuid
+import copy
 
 from caffe2.python import core, workspace
 
@@ -69,17 +73,23 @@ class RoIDataLoader(object):
         roidb,
         num_loaders=4,
         minibatch_queue_size=64,
-        blobs_queue_capacity=8
+        blobs_queue_capacity=8,
+        num_augmentation_processes=8,
     ):
         self._roidb = roidb
+        for roi in roidb:
+            roi.pop('dataset', None)  # pop the reference to prevent duplication
         self._lock = threading.Lock()
         self._perm = deque(range(len(self._roidb)))
         self._cur = 0  # _perm cursor
+        self._counter = 0
         # The minibatch queue holds prepared training data in host (CPU) memory
         # When training with N > 1 GPUs, each element in the minibatch queue
         # is actually a partial minibatch which contributes 1 / N of the
         # examples to the overall minibatch
         self._minibatch_queue = Queue.Queue(maxsize=minibatch_queue_size)
+        self._minibatch_queue_mp = MPQueue(minibatch_queue_size)
+
         self._blobs_queue_capacity = blobs_queue_capacity
         # Random queue name in case one instantiates multple RoIDataLoaders
         self._loader_id = uuid.uuid4()
@@ -93,24 +103,117 @@ class RoIDataLoader(object):
         self._output_names = get_minibatch_blob_names()
         self._shuffle_roidb_inds()
         self.create_threads()
+        self.num_augmentation_processes = num_augmentation_processes
 
     def minibatch_loader_thread(self):
         """Load mini-batches and put them onto the mini-batch queue."""
+        augmentation_process_pool = None
+        mini_thread_batch_iter = 0
         with self.coordinator.stop_on_exception():
             while not self.coordinator.should_stop():
-                blobs = self.get_next_minibatch()
-                # Blobs must be queued in the order specified by
-                # self.get_output_names
-                ordered_blobs = OrderedDict()
-                for key in self.get_output_names():
-                    assert blobs[key].dtype in (np.int32, np.float32), \
-                        'Blob {} of dtype {} must have dtype of ' \
-                        'np.int32 or np.float32'.format(key, blobs[key].dtype)
-                    ordered_blobs[key] = blobs[key]
-                coordinated_put(
-                    self.coordinator, self._minibatch_queue, ordered_blobs
-                )
+                t = time.time()
+
+                if mini_thread_batch_iter % 10 == 0:
+                    if augmentation_process_pool:
+                        augmentation_process_pool.close()
+                        augmentation_process_pool.join()
+                        logger.info('get_next_parallel_minibatch DELETE POOL Thread: {} took time: {} MINI_ITER: {}'.format(threading.currentThread(), time.time() - t, mini_thread_batch_iter))
+
+                    augmentation_process_pool = self.crate_augmentation_process_pool(self.num_augmentation_processes)
+                    logger.info('get_next_parallel_minibatch CREATE POOL Thread: {} took time: {} MINI_ITER: {}'.format(threading.currentThread(), time.time() - t, mini_thread_batch_iter))
+
+                t = time.time()
+                logger.info('get_next_parallel_minibatch: Going to prepare for thread: {} MINI_ITER: {}'.format(threading.currentThread(), mini_thread_batch_iter))
+                blobs_list = self.get_next_parallel_minibatch(augmentation_process_pool, self.num_augmentation_processes)
+                logger.info('get_next_parallel_minibatch Thread: {}  {}: len of blobs_list: {} MINI_ITER: {}'.format(threading.currentThread(), time.time() - t, len(blobs_list), mini_thread_batch_iter))
+                t = time.time()
+                for blobs in blobs_list:
+                    # Blobs must be queued in the order specified by
+                    # self.get_output_names
+                    ordered_blobs = OrderedDict()
+                    for key in self.get_output_names():
+                        assert blobs[key].dtype in (np.int32, np.float32), \
+                            'Blob {} of dtype {} must have dtype of ' \
+                            'np.int32 or np.float32'.format(key, blobs[key].dtype)
+                        ordered_blobs[key] = blobs[key]
+                    coordinated_put(
+                        self.coordinator, self._minibatch_queue, ordered_blobs
+                    )
+
+                logger.debug('coordinated_put {}: len of blobs_list: {} MINI_ITER: {}'.format(time.time() - t, len(blobs_list), mini_thread_batch_iter))
+
+                t = time.time()
+                # del blobs_list
+                mini_thread_batch_iter += 1
+
+        if augmentation_process_pool:
+            augmentation_process_pool.close()
+            augmentation_process_pool.join()
+            logger.info('get_next_parallel_minibatch DELETE POOL Thread: {}'.format(threading.currentThread()))
+
         logger.info('Stopping mini-batch loading thread')
+
+    def rescale_0_1(self, X):
+        # X = np.random.uniform(low=-1, high=1, size=(100,120))
+        from sklearn.preprocessing import MinMaxScaler
+        min_max_scaler = MinMaxScaler(feature_range=(0, 1), copy=False)
+        sz = X.shape
+        X = min_max_scaler.fit_transform(X.reshape(-1,1))
+        X = X.reshape(sz)
+        return X
+
+    def save_im_masks(self, blobs):
+        import os, uuid
+        from datasets.dataset_catalog import _DATA_DIR
+        import utils.blob as blob_utils
+
+        channel_swap = (0, 2, 3, 1)
+        data = blobs['data'].copy()
+
+        im = data.transpose(channel_swap)[0]
+        im = self.rescale_0_1(im)
+
+        roidb_temp = blob_utils.deserialize(blobs['roidb'])[0]
+
+        im_name = str(self._counter) + '_' + os.path.splitext(os.path.basename(roidb_temp['image']))[0]
+
+        with self._lock:
+            self._counter += 1
+
+        out_dir = os.path.join(_DATA_DIR, 'vis', roidb_temp['nuclei_class'])
+        im_name += '_' + str(uuid.uuid4().get_hex().upper()[0:6])
+
+        try:
+            os.makedirs(out_dir)
+        except:
+            pass
+
+        aug_rles = roidb_temp['segms']
+
+        boxes = roidb_temp['boxes']
+        boxes = np.append(boxes, np.ones((len(boxes), 2)), 1)
+        im_scale = blobs['im_info'][0, 2]
+
+        from utils.vis import vis_one_image
+        vis_one_image(im, im_name, out_dir, boxes, segms=aug_rles, keypoints=None, thresh=0.7,
+                      box_alpha=0.8, show_class=False, scale=im_scale)
+
+    def enqueue_blobs_thread_mp(self, gpu_id, blob_names):
+        """Transfer mini-batches from a mini-batch queue to a BlobsQueue."""
+        with self.coordinator.stop_on_exception():
+            while not self.coordinator.should_stop():
+                if self._minibatch_queue_mp.qsize() == 0:
+                    logger.warning('minibatch_queue_mp -batch queue is empty')
+                blobs = coordinated_get(self.coordinator, self._minibatch_queue_mp)
+
+                if cfg.LOG_IMAGES and np.random.random() <= 0.01:
+                    self.save_im_masks(blobs)
+
+                self.enqueue_blobs(gpu_id, blob_names, blobs.values())
+                logger.debug(
+                    'batch queue size {}'.format(self._minibatch_queue_mp.qsize())
+                )
+            logger.info('Stopping enqueue thread')
 
     def enqueue_blobs_thread(self, gpu_id, blob_names):
         """Transfer mini-batches from a mini-batch queue to a BlobsQueue."""
@@ -120,10 +223,30 @@ class RoIDataLoader(object):
                     logger.warning('Mini-batch queue is empty')
                 blobs = coordinated_get(self.coordinator, self._minibatch_queue)
                 self.enqueue_blobs(gpu_id, blob_names, blobs.values())
-                logger.debug(
+                logger.info(
                     'batch queue size {}'.format(self._minibatch_queue.qsize())
                 )
             logger.info('Stopping enqueue thread')
+
+    def get_next_parallel_minibatch(self, augmentation_process_pool, parallel_size):
+        """Return the blobs to be used for the next minibatch. Thread safe."""
+
+        db_inds_list = [self._get_next_minibatch_inds() for _ in range(parallel_size)]
+        minibatch_db_list = [[self._roidb[i] for i in db_inds] for db_inds in db_inds_list]
+
+        copy_minibatch_db_list = copy.deepcopy(minibatch_db_list)
+
+        logger.info('get_next_parallel_minibatch MAP POOL Thread: {}'.format(threading.currentThread()))
+        res = augmentation_process_pool.map(get_minibatch, copy_minibatch_db_list)
+        logger.info('get_next_parallel_minibatch MAP POOL COMPLETE Thread: {}'.format(threading.currentThread()))
+
+        valid_blobs_list = [blobs for blobs, valid in res if valid]
+
+        del copy_minibatch_db_list
+        del minibatch_db_list
+        del res
+
+        return valid_blobs_list
 
     def get_next_minibatch(self):
         """Return the blobs to be used for the next minibatch. Thread safe."""
@@ -134,15 +257,46 @@ class RoIDataLoader(object):
             blobs, valid = get_minibatch(minibatch_db)
         return blobs
 
+    def sample_n(self, Idxs, n):
+        RIDxs = []
+        while len(RIDxs) < n:
+            rem = n - len(RIDxs)
+            if len(Idxs) <= rem:
+                RIDxs.extend(Idxs)
+            else:
+                P_Idxs = np.random.permutation(Idxs)
+                RIDxs.extend(P_Idxs[:rem])
+        return RIDxs  # numpy.random.permutation(RIDxs)
+
     def _shuffle_roidb_inds(self):
+
         """Randomly permute the training roidb. Not thread safe."""
+        if cfg.TRAIN.NORMALIZE_CLASSES:
+            # logger.info('========== Normalizing classes ========')
+            nuclei_classes = np.array([r['nuclei_class'] for r in self._roidb])
+            groups = [np.where(nuclei_classes == c)[0] for c in set(nuclei_classes)]
+            n_per_group = int(len(self._roidb) / len(groups))
+
+            groups_sampled = [self.sample_n(g, n_per_group) for g in groups]
+            IDXs = np.asarray([item for sublist in groups_sampled for item in sublist])
+
+        else:
+            IDXs = np.arange(len(self._roidb))
+
         if cfg.TRAIN.ASPECT_GROUPING:
-            widths = np.array([r['width'] for r in self._roidb])
-            heights = np.array([r['height'] for r in self._roidb])
+            # logger.info('========== Aspect Grouping ========')
+            # THIS ONLY HAPPENS WHEN DATASET SIZE IS NOT EVEN NUMBER AT LINE NO: 311
+            # ADDING TESTING STAGE 1 DATA TRIGGERED THIS BUG AND COULD NOT FINETUNE
+
+            if len(IDXs) % 2 != 0:
+                IDXs = np.concatenate([IDXs, [IDXs[0]]])
+
+            widths = np.array([self._roidb[r]['width'] for r in IDXs])
+            heights = np.array([self._roidb[r]['height'] for r in IDXs])
             horz = (widths >= heights)
             vert = np.logical_not(horz)
-            horz_inds = np.where(horz)[0]
-            vert_inds = np.where(vert)[0]
+            horz_inds = [IDXs[r] for r in np.where(horz)[0]]
+            vert_inds = [IDXs[r] for r in np.where(vert)[0]]
             inds = np.hstack(
                 (
                     np.random.permutation(horz_inds),
@@ -153,9 +307,10 @@ class RoIDataLoader(object):
             row_perm = np.random.permutation(np.arange(inds.shape[0]))
             inds = np.reshape(inds[row_perm, :], (-1, ))
             self._perm = inds
+            # logger.info('Permutations: {}'.format(inds))
         else:
-            self._perm = np.random.permutation(np.arange(len(self._roidb)))
-        self._perm = deque(self._perm)
+            self._perm = np.random.permutation(IDXs)
+        self._perm = deque(np.int32(self._perm))
         self._cur = 0
 
     def _get_next_minibatch_inds(self):
@@ -200,7 +355,25 @@ class RoIDataLoader(object):
             format(gpu_id, time.time() - t)
         )
 
+    def create_threads_and_pool_mp(self):
+
+        # Create one BlobsQueue per GPU
+        # (enqueue_blob_names are unscoped)
+        enqueue_blob_names = self.create_blobs_queues()
+
+        # Create one enqueuer thread per GPU
+        self._enqueuers = [
+            threading.Thread(
+                target=self.enqueue_blobs_thread_mp,
+                args=(gpu_id, enqueue_blob_names)
+            ) for gpu_id in range(self._num_gpus)
+        ]
+
     def create_threads(self):
+        if cfg.DATA_LOADER.PROCESS_POOL_LOADER:
+            self.create_threads_and_pool_mp()
+            return
+
         # Create mini-batch loader threads, each of which builds mini-batches
         # and places them into a queue in CPU memory
         self._workers = [
@@ -220,7 +393,43 @@ class RoIDataLoader(object):
             ) for gpu_id in range(self._num_gpus)
         ]
 
+    def start_mp(self, prefill=False):
+        from roi_data.minibatch import put_minibatch_in_queue
+
+        import cPickle
+        with open('/detectron/lib/datasets/data/roidb.pkl', 'w') as f:
+            cPickle.dump(self._roidb, f)
+
+        with open('/detectron/lib/datasets/data/cfg.pkl', 'w') as f:
+            cPickle.dump(cfg, f)
+
+        self.loader_pool = Pool(processes=self.num_augmentation_processes,
+                                initializer=put_minibatch_in_queue,
+                                initargs=(self._minibatch_queue_mp,))
+
+        for w in self._enqueuers:
+            w.start()
+
+        if prefill:
+            logger.info('Pre-filling mini-batch queue...')
+            while not self._minibatch_queue_mp.full():
+                logger.info(
+                    '  [{:d}/{:d}]'.format(
+                        self._minibatch_queue_mp.qsize(),
+                        self._minibatch_queue_mp._maxsize
+                    )
+                )
+                time.sleep(0.1)
+                # Detect failure and shutdown
+                if self.coordinator.should_stop():
+                    self.shutdown()
+                    break
+
     def start(self, prefill=False):
+        if cfg.DATA_LOADER.PROCESS_POOL_LOADER:
+            self.start_mp(prefill)
+            return
+
         for w in self._workers + self._enqueuers:
             w.start()
         if prefill:
@@ -238,7 +447,21 @@ class RoIDataLoader(object):
                     self.shutdown()
                     break
 
+    def shutdown_mp(self):
+        self.coordinator.request_stop()
+        self.coordinator.wait_for_stop()
+        self.close_blobs_queues()
+        self.loader_pool.terminate()
+        self.loader_pool.join()
+
+        for w in self._enqueuers:
+            w.join()
+
     def shutdown(self):
+        if cfg.DATA_LOADER.PROCESS_POOL_LOADER:
+            self.shutdown_mp()
+            return
+
         self.coordinator.request_stop()
         self.coordinator.wait_for_stop()
         self.close_blobs_queues()
@@ -287,3 +510,7 @@ class RoIDataLoader(object):
             self.shutdown()
 
         signal.signal(signal.SIGINT, signal_handler)
+
+    def crate_augmentation_process_pool(self, num_processes):
+        pool = Pool(processes=num_processes)
+        return pool
