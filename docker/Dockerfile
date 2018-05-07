@@ -15,8 +15,8 @@ RUN git clone https://github.com/cocodataset/cocoapi.git /cocoapi
 WORKDIR /cocoapi/PythonAPI
 RUN make install
 
-# Clone the Detectron repository
-RUN git clone https://github.com/facebookresearch/detectron /detectron
+# Copy the project to docker
+ADD NucleiDetectron /detectron
 
 # Set up Python modules
 WORKDIR /detectron/lib
