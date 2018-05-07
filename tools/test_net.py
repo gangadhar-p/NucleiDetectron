@@ -81,6 +81,20 @@ def parse_args():
         nargs=2
     )
     parser.add_argument(
+        '--weights-folder',
+        dest='weights_folder',
+        help='weights-folder',
+        default=None,
+        type=str
+    )
+    parser.add_argument(
+        '--output-folder',
+        dest='output_folder',
+        help='output folder',
+        default=None,
+        type=str
+    )
+    parser.add_argument(
         'opts',
         help='See lib/core/config.py for all options',
         default=None,
@@ -103,7 +117,38 @@ def main(ind_range=None, multi_gpu_testing=False):
             atol=cfg.EXPECTED_RESULTS_ATOL,
             rtol=cfg.EXPECTED_RESULTS_RTOL
         )
+        import json
+        json.dump(all_results, open(os.path.join(output_dir, 'bbox_results_all.json'), 'w'))
         task_evaluation.log_copy_paste_friendly_results(all_results)
+
+
+def get_list_of_weight_files_todo(weights_folder, output_folder=None):
+    import os
+    from glob import glob
+    weights_files = [y for x in os.walk(weights_folder) for y in glob(os.path.join(x[0], '*.pkl'))]
+    list_of_weigths_targets_filtered = []
+    for file_path in weights_files:
+        iter_number = file_path.rsplit('_', 1)[1][4:-4]
+        if not iter_number:
+            iter_number = 'final_model'
+        result_folder = os.path.join(output_folder, iter_number)
+        if os.path.isdir(result_folder) and \
+                os.path.isfile(os.path.join(result_folder,
+                                            'test/nuclei_stage_1_local_val_split/generalized_rcnn/bbox_results_all.json')):
+            continue
+        if os.path.isdir(result_folder) and \
+                os.path.isfile(os.path.join(result_folder,
+                                            'test/nuclei_stage_1_test/generalized_rcnn/bbox_results_all.json')):
+            continue
+        if os.path.isdir(result_folder) and \
+                os.path.isfile(os.path.join(result_folder,
+                                            'test/nuclei_stage_2_test/generalized_rcnn/bbox_results_all.json')):
+            continue
+        list_of_weigths_targets_filtered.append((file_path, result_folder, int(iter_number)))
+
+    list_of_weigths_targets_filtered = sorted(list_of_weigths_targets_filtered, key=lambda item: item[2],  reverse=True)
+
+    return list_of_weigths_targets_filtered
 
 
 if __name__ == '__main__':
@@ -120,8 +165,29 @@ if __name__ == '__main__':
     logger.info('Testing with config:')
     logger.info(pprint.pformat(cfg))
 
-    while not os.path.exists(cfg.TEST.WEIGHTS) and args.wait:
-        logger.info('Waiting for \'{}\' to exist...'.format(cfg.TEST.WEIGHTS))
-        time.sleep(10)
+    if cfg.TEST.WEIGHTS:
+        if args.output_folder:
+            cfg.OUTPUT_DIR = args.output_folder
+        main(ind_range=args.range, multi_gpu_testing=args.multi_gpu_testing)
 
-    main(ind_range=args.range, multi_gpu_testing=args.multi_gpu_testing)
+    else:
+        list_of_weigths_targets = get_list_of_weight_files_todo(
+            weights_folder=args.weights_folder,
+            output_folder=args.output_folder)
+
+        if not list_of_weigths_targets:
+            time.sleep(30)
+
+        for weights_file, output_folder, iter_number in list_of_weigths_targets:
+            # All arguments to inference functions are passed via cfg
+            cfg.TEST.WEIGHTS = weights_file
+            cfg.OUTPUT_DIR = output_folder
+
+            # Clear memory before inference
+            workspace.ResetWorkspace()
+
+            while not os.path.exists(cfg.TEST.WEIGHTS) and args.wait:
+                logger.info('Waiting for \'{}\' to exist...'.format(cfg.TEST.WEIGHTS))
+                time.sleep(10)
+
+            main(ind_range=args.range, multi_gpu_testing=args.multi_gpu_testing)

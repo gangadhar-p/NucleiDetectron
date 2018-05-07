@@ -139,6 +139,25 @@ def main(args):
             kp_thresh=2
         )
 
+        import json
+        try:
+            os.mkdir(os.path.join(args.output_dir, '{}'.format('json/')))
+        except:
+            pass
+
+        json_out_name = os.path.join(
+            args.output_dir, '{}'.format('json/' + os.path.basename(im_name) + '.json')
+        )
+        for segms in cls_segms:
+            for seg in segms:
+                seg['counts'] = seg['counts'].decode('utf-8')
+
+        json.dump({
+            'im_name': im_name,
+            'boxes': [[b.tolist() for b in bs] for bs in cls_boxes],
+            'segms': cls_segms
+        }, open(json_out_name, 'w'))
+
 
 if __name__ == '__main__':
     workspace.GlobalInit(['caffe2', '--caffe2_log_level=0'])

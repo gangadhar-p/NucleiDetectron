@@ -46,6 +46,7 @@ from core.config import assert_and_infer_cfg
 from core.config import cfg
 from core.config import merge_cfg_from_file
 from core.config import merge_cfg_from_list
+from datasets.nuclei.nuclei_utils import normalize_and_whiten
 from modeling import generate_anchors
 import core.test_engine as test_engine
 import utils.c2 as c2_utils
@@ -410,6 +411,9 @@ def _prepare_blobs(
     im = im.astype(np.float32, copy=False)
     im -= pixel_means
     im_shape = im.shape
+
+    if cfg.GRAY_IMAGES:
+        im = normalize_and_whiten(im)
 
     im_size_min = np.min(im_shape[0:2])
     im_size_max = np.max(im_shape[0:2])
