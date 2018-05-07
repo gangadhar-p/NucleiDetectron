@@ -48,17 +48,31 @@ from __future__ import unicode_literals
 import numpy as np
 
 from core.config import cfg
-import utils.cython_bbox as cython_bbox
-import utils.cython_nms as cython_nms
 
-bbox_overlaps = cython_bbox.bbox_overlaps
+
+def bbox_overlaps(boxes, query_boxes):
+    import utils.cython_bbox as cython_bbox
+    return cython_bbox.bbox_overlaps(boxes, query_boxes)
+
+
+import logging
+logger = logging.getLogger(__name__)
 
 
 def boxes_area(boxes):
     """Compute the area of an array of boxes."""
     w = (boxes[:, 2] - boxes[:, 0] + 1)
     h = (boxes[:, 3] - boxes[:, 1] + 1)
+
+    w[w < 0] = 0
+    h[h < 0] = 0
     areas = w * h
+
+    if not np.all(areas >= 0):
+        logger.info('Exception: Negative areas found')
+        logger.info(areas)
+        logger.info(boxes)
+
     assert np.all(areas >= 0), 'Negative areas founds'
     return areas
 
@@ -76,14 +90,14 @@ def xywh_to_xyxy(xywh):
     if isinstance(xywh, (list, tuple)):
         # Single box given as a list of coordinates
         assert len(xywh) == 4
-        x1, y1 = xywh[0], xywh[1]
-        x2 = x1 + np.maximum(0., xywh[2] - 1.)
-        y2 = y1 + np.maximum(0., xywh[3] - 1.)
+        x1, y1 = xywh[0] - 1.0, xywh[1] - 1.0
+        x2 = x1 + np.maximum(0., xywh[2] + 1.)
+        y2 = y1 + np.maximum(0., xywh[3] + 1.)
         return (x1, y1, x2, y2)
     elif isinstance(xywh, np.ndarray):
         # Multiple boxes given as a 2D ndarray
         return np.hstack(
-            (xywh[:, 0:2], xywh[:, 0:2] + np.maximum(0, xywh[:, 2:4] - 1))
+            (xywh[:, 0:2] - 1.0, xywh[:, 0:2] + np.maximum(0, xywh[:, 2:4] + 1.0))
         )
     else:
         raise TypeError('Argument xywh must be a list, tuple, or numpy array.')
@@ -312,6 +326,8 @@ def box_voting(top_dets, all_dets, thresh, scoring_method='ID', beta=1.0):
 
 
 def nms(dets, thresh):
+    import utils.cython_nms as cython_nms
+
     """Apply classic DPM-style greedy NMS."""
     if dets.shape[0] == 0:
         return []
@@ -321,6 +337,8 @@ def nms(dets, thresh):
 def soft_nms(
     dets, sigma=0.5, overlap_thresh=0.3, score_thresh=0.001, method='linear'
 ):
+    import utils.cython_nms as cython_nms
+
     """Apply the soft NMS algorithm from https://arxiv.org/abs/1704.04503."""
     if dets.shape[0] == 0:
         return dets, []

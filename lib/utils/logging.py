@@ -29,7 +29,7 @@ import smtplib
 import sys
 
 # Print lower precision floating point values than default FLOAT_REPR
-json.encoder.FLOAT_REPR = lambda o: format(o, '.6f')
+json.encoder.FLOAT_REPR = lambda o: format(o, '.12f')
 
 
 def log_json_stats(stats, sort_keys=True):

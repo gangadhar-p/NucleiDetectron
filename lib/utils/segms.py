@@ -30,6 +30,10 @@ from __future__ import unicode_literals
 import numpy as np
 
 import pycocotools.mask as mask_util
+import utils.boxes as box_utils
+import cv2
+import logging
+logger = logging.getLogger(__name__)
 
 
 def flip_segms(segms, height, width):
@@ -45,7 +49,10 @@ def flip_segms(segms, height, width):
             # COCO API showAnns function.
             rle = mask_util.frPyObjects([rle], height, width)
         mask = mask_util.decode(rle)
-        mask = mask[:, ::-1, :]
+        if len(mask.shape) == 3:
+            mask = mask[:, ::-1, :]
+        else:
+            mask = mask[:, ::-1]
         rle = mask_util.encode(np.array(mask, order='F', dtype=np.uint8))
         return rle
 
@@ -96,6 +103,9 @@ def polys_to_mask_wrt_box(polygons, box, M):
     is understood to be enclosed in the given box and rasterized to an M x M
     mask. The resulting mask is therefore of shape (M, M).
     """
+    if isinstance(polygons, dict):
+        return rle_to_mask_wrt_box(polygons, box, M)
+
     w = box[2] - box[0]
     h = box[3] - box[1]
 
@@ -117,8 +127,30 @@ def polys_to_mask_wrt_box(polygons, box, M):
     return mask
 
 
+def rle_to_mask_wrt_box(rle, box, M):
+    mask = mask_util.decode(rle)
+    # convert indices to int in case they are float
+    box = [int(x) for x in box]
+    mask = mask[box[1]:box[3], box[0]:box[2]]
+
+    if M == 0:
+        return np.zeros((M, M), dtype=np.float32)
+
+    if mask.shape[0] > 0 and mask.shape[1] > 0:
+        mask = cv2.resize(mask, dsize=(M, M), interpolation=cv2.INTER_CUBIC)
+    else:
+        # logger.info('RLE_TO_MASK_WRT_BOX: M: {}, \n box: {}, \n mask:{}'.format(M, box, mask))
+        return np.zeros((M, M), dtype=np.float32)
+
+    mask = np.array(mask > 0, dtype=np.float32)
+    return mask
+
+
 def polys_to_boxes(polys):
     """Convert a list of polygons into an array of tight bounding boxes."""
+    if polys and isinstance(polys[0], dict):
+        return rle_to_boxes(polys)
+
     boxes_from_polys = np.zeros((len(polys), 4), dtype=np.float32)
     for i in range(len(polys)):
         poly = polys[i]
@@ -128,6 +160,16 @@ def polys_to_boxes(polys):
         y1 = max(max(p[1::2]) for p in poly)
         boxes_from_polys[i, :] = [x0, y0, x1, y1]
 
+    return boxes_from_polys
+
+
+def rle_to_boxes(rles):
+    boxes_from_polys = np.zeros((len(rles), 4), dtype=np.float32)
+    for i in range(len(rles)):
+        rle = rles[i]
+        x0, y0, w, h = mask_util.toBbox(rle)
+        x1, y1 = x0 + w, y0 + h
+        boxes_from_polys[i, :] = [x0, y0, x1, y1]
     return boxes_from_polys
 
 

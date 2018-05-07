@@ -23,12 +23,15 @@ from __future__ import unicode_literals
 import cv2
 import numpy as np
 import os
+import logging
 
 import pycocotools.mask as mask_util
 
 from utils.colormap import colormap
 import utils.env as envu
 import utils.keypoints as keypoint_utils
+from core.config import cfg
+logger = logging.getLogger(__name__)
 
 # Matplotlib requires certain adjustments in some environments
 # Must happen before importing matplotlib
@@ -248,25 +251,62 @@ def vis_one_image_opencv(
     return im
 
 
-def vis_one_image(
-        im, im_name, output_dir, boxes, segms=None, keypoints=None, thresh=0.9,
-        kp_thresh=2, dpi=200, box_alpha=0.0, dataset=None, show_class=False,
-        ext='pdf'):
-    """Visual debugging of detections."""
+def save_im_fig(result_tuple, out_dir_res):
+    im_orig_path, boxes, segms = result_tuple
+    im_name = im_orig_path.rsplit('/', 1)[1].split('.')[0]
+    im = cv2.imread(im_orig_path)[:, :, ::-1]
+    vis_one_image(im, im_name, out_dir_res, [boxes],
+                  segms=[segms],
+                  thresh=1, dpi=200, box_alpha=0.4, dataset=None, show_class=True, ext='pdf',
+                  thresh_lo=-1, range_thresh=True)
+
+
+def vis_one_image(im, im_name, output_dir, boxes, segms=None, keypoints=None, thresh=0.9, kp_thresh=2, dpi=200,
+                  box_alpha=0.0, dataset=None, show_class=False, ext='pdf', thresh_lo=None, range_thresh=False,
+                  scale=None, classes=None):
+    """Visual debugging of detections.
+    :param range_thresh:
+    :param thresh_lo:
+    """
+    output_name = os.path.basename(im_name) + '.' + ext
+    fig_path = os.path.join(output_dir, '{}'.format(output_name))
+    if os.path.isfile(fig_path):
+        return
+
     if not os.path.exists(output_dir):
-        os.makedirs(output_dir)
+        try:
+            os.makedirs(output_dir)
+        except:
+            pass
 
     if isinstance(boxes, list):
         boxes, segms, keypoints, classes = convert_from_cls_format(
             boxes, segms, keypoints)
 
-    if boxes is None or boxes.shape[0] == 0 or max(boxes[:, 4]) < thresh:
+    if range_thresh:
+        if boxes is None or boxes.shape[0] == 0 or (max(boxes[:, 4]) <= thresh_lo and min(boxes[:, 4]) > thresh):
+            return
+
+    elif boxes is None or boxes.shape[0] == 0 or max(boxes[:, 4]) < thresh:
         return
 
     dataset_keypoints, _ = keypoint_utils.get_keypoints()
 
     if segms is not None:
         masks = mask_util.decode(segms)
+
+        if scale:
+
+            im_size_max = max(masks.shape)
+
+            if np.round(scale * im_size_max) > cfg.TRAIN.MAX_SIZE:
+                scale = float(cfg.TRAIN.MAX_SIZE) / float(im_size_max)
+
+            masks = cv2.resize(masks, None, None, fx=scale, fy=scale, interpolation=cv2.INTER_LINEAR)
+            if len(masks.shape) == 2:
+                masks = np.expand_dims(masks, -1)
+
+            boxes = boxes * scale
 
     color_list = colormap(rgb=True) / 255
 
@@ -289,7 +329,11 @@ def vis_one_image(
     for i in sorted_inds:
         bbox = boxes[i, :4]
         score = boxes[i, -1]
-        if score < thresh:
+
+        if range_thresh:
+            if not (thresh_lo < score <= thresh):
+                continue
+        elif score < thresh:
             continue
 
         # show box (off by default)
@@ -297,17 +341,17 @@ def vis_one_image(
             plt.Rectangle((bbox[0], bbox[1]),
                           bbox[2] - bbox[0],
                           bbox[3] - bbox[1],
-                          fill=False, edgecolor='g',
-                          linewidth=0.5, alpha=box_alpha))
+                          fill=False, edgecolor='b',
+                          linewidth=0.2, alpha=0.3))
 
         if show_class:
             ax.text(
                 bbox[0], bbox[1] - 2,
                 get_class_string(classes[i], score, dataset),
-                fontsize=3,
+                fontsize=2,
                 family='serif',
                 bbox=dict(
-                    facecolor='g', alpha=0.4, pad=0, edgecolor='none'),
+                    facecolor='g', alpha=0.2, pad=0, edgecolor='none'),
                 color='white')
 
         # show mask
@@ -316,7 +360,7 @@ def vis_one_image(
             color_mask = color_list[mask_color_id % len(color_list), 0:3]
             mask_color_id += 1
 
-            w_ratio = .4
+            w_ratio = .1
             for c in range(3):
                 color_mask[c] = color_mask[c] * (1 - w_ratio) + w_ratio
             for c in range(3):
@@ -330,8 +374,8 @@ def vis_one_image(
                 polygon = Polygon(
                     c.reshape((-1, 2)),
                     fill=True, facecolor=color_mask,
-                    edgecolor='w', linewidth=1.2,
-                    alpha=0.5)
+                    edgecolor='b', linewidth=0.2,
+                    alpha=0.2)
                 ax.add_patch(polygon)
 
         # show keypoints
@@ -384,6 +428,5 @@ def vis_one_image(
                     line, color=colors[len(kp_lines) + 1], linewidth=1.0,
                     alpha=0.7)
 
-    output_name = os.path.basename(im_name) + '.' + ext
-    fig.savefig(os.path.join(output_dir, '{}'.format(output_name)), dpi=dpi)
+    fig.savefig(fig_path, dpi=dpi)
     plt.close('all')

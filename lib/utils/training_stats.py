@@ -31,7 +31,8 @@ from utils.logging import log_json_stats
 from utils.logging import SmoothedValue
 from utils.timer import Timer
 import utils.net as nu
-
+from core.config import get_output_dir
+import os, json
 
 class TrainingStats(object):
     """Track vital training statistics."""
@@ -87,6 +88,10 @@ class TrainingStats(object):
                 cur_iter == cfg.SOLVER.MAX_ITER - 1):
             stats = self.GetStats(cur_iter, lr)
             log_json_stats(stats)
+
+            with open(os.path.join(get_output_dir(), 'json_stats.json'), 'a') as f:
+                f.write(json.dumps(stats, sort_keys=True))
+                f.write('\n')
 
     def GetStats(self, cur_iter, lr):
         eta_seconds = self.iter_timer.average_time * (

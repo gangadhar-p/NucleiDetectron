@@ -32,9 +32,9 @@ import cPickle as pickle
 import cv2
 import numpy as np
 
-from caffe2.proto import caffe2_pb2
 
 from core.config import cfg
+from datasets.nuclei.nuclei_utils import normalize_and_whiten
 
 
 def im_list_to_blob(ims):
@@ -67,7 +67,7 @@ def im_list_to_blob(ims):
     return blob
 
 
-def prep_im_for_blob(im, pixel_means, target_sizes, max_size):
+def prep_im_for_blob(im_in, pixel_means, target_sizes, max_size):
     """Prepare an image for use as a network input blob. Specially:
       - Subtract per-channel pixel mean
       - Convert to float32
@@ -75,11 +75,14 @@ def prep_im_for_blob(im, pixel_means, target_sizes, max_size):
     Returns a list of transformed images, one for each target size. Also returns
     the scale factors that were used to compute each returned image.
     """
-    im = im.astype(np.float32, copy=False)
-    im -= pixel_means
-    im_shape = im.shape
+    im_orig = im_in.astype(np.float32, copy=False)
+    im_orig -= pixel_means
+    im_shape = im_orig.shape
     im_size_min = np.min(im_shape[0:2])
     im_size_max = np.max(im_shape[0:2])
+
+    if cfg.GRAY_IMAGES:
+        im_orig = normalize_and_whiten(im_orig)
 
     ims = []
     im_scales = []
@@ -88,7 +91,7 @@ def prep_im_for_blob(im, pixel_means, target_sizes, max_size):
         # Prevent the biggest axis from being more than max_size
         if np.round(im_scale * im_size_max) > max_size:
             im_scale = float(max_size) / float(im_size_max)
-        im = cv2.resize(im, None, None, fx=im_scale, fy=im_scale,
+        im = cv2.resize(im_orig, None, None, fx=im_scale, fy=im_scale,
                         interpolation=cv2.INTER_LINEAR)
         ims.append(im)
         im_scales.append(im_scale)
@@ -114,6 +117,8 @@ def py_op_copy_blob(blob_in, blob_out):
     given as blob_out. Supports float32 and int32 blob data types. This function
     is intended for copying numpy data into a Caffe2 blob in PythonOps.
     """
+    from caffe2.proto import caffe2_pb2
+
     # Some awkward voodoo required by Caffe2 to support int32 blobs
     needs_int32_init = False
     try:
