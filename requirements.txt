@@ -1,0 +1,13 @@
+pathlib
+imageio
+opencv-python
+matplotlib
+imgaug
+numpy
+scipy
+scikit-learn
+scikit-image
+cython
+future
+pyyaml
+awscli
