@@ -208,6 +208,41 @@ def im_detect_bbox_aug(model, im, box_proposals=None):
         cfg.TEST.BBOX_AUG.SCORE_HEUR == 'UNION', \
         'Union heuristic must be used to combine Faster RCNN predictions'
 
+    scores_ts, boxes_ts, im_scales_i, scores_i, boxes_i = im_detect_with_transformations(model, im, box_proposals)
+    if cfg.TEST.BBOX_AUG.INVERT:
+        im_inv = 255 - im
+        scores_ts_inv, boxes_ts_inv, im_scales_i_inv, scores_i_inv, boxes_i_inv = im_detect_with_transformations(model, im_inv, box_proposals)
+        scores_ts.extend(scores_ts_inv)
+        boxes_ts.extend(boxes_ts_inv)
+
+    # Combine the predicted scores
+    if cfg.TEST.BBOX_AUG.SCORE_HEUR == 'ID':
+        scores_c = scores_i
+    elif cfg.TEST.BBOX_AUG.SCORE_HEUR == 'AVG':
+        scores_c = np.mean(scores_ts, axis=0)
+    elif cfg.TEST.BBOX_AUG.SCORE_HEUR == 'UNION':
+        scores_c = np.vstack(scores_ts)
+    else:
+        raise NotImplementedError(
+            'Score heur {} not supported'.format(cfg.TEST.BBOX_AUG.SCORE_HEUR)
+        )
+
+    # Combine the predicted boxes
+    if cfg.TEST.BBOX_AUG.COORD_HEUR == 'ID':
+        boxes_c = boxes_i
+    elif cfg.TEST.BBOX_AUG.COORD_HEUR == 'AVG':
+        boxes_c = np.mean(boxes_ts, axis=0)
+    elif cfg.TEST.BBOX_AUG.COORD_HEUR == 'UNION':
+        boxes_c = np.vstack(boxes_ts)
+    else:
+        raise NotImplementedError(
+            'Coord heur {} not supported'.format(cfg.TEST.BBOX_AUG.COORD_HEUR)
+        )
+
+    return scores_c, boxes_c, im_scales_i
+
+
+def im_detect_with_transformations(model, im, box_proposals):
     # Collect detections computed under different transformations
     scores_ts = []
     boxes_ts = []
@@ -256,31 +291,7 @@ def im_detect_bbox_aug(model, im, box_proposals=None):
     scores_i, boxes_i, im_scales_i = im_detect_bbox(model, im, box_proposals)
     add_preds_t(scores_i, boxes_i)
 
-    # Combine the predicted scores
-    if cfg.TEST.BBOX_AUG.SCORE_HEUR == 'ID':
-        scores_c = scores_i
-    elif cfg.TEST.BBOX_AUG.SCORE_HEUR == 'AVG':
-        scores_c = np.mean(scores_ts, axis=0)
-    elif cfg.TEST.BBOX_AUG.SCORE_HEUR == 'UNION':
-        scores_c = np.vstack(scores_ts)
-    else:
-        raise NotImplementedError(
-            'Score heur {} not supported'.format(cfg.TEST.BBOX_AUG.SCORE_HEUR)
-        )
-
-    # Combine the predicted boxes
-    if cfg.TEST.BBOX_AUG.COORD_HEUR == 'ID':
-        boxes_c = boxes_i
-    elif cfg.TEST.BBOX_AUG.COORD_HEUR == 'AVG':
-        boxes_c = np.mean(boxes_ts, axis=0)
-    elif cfg.TEST.BBOX_AUG.COORD_HEUR == 'UNION':
-        boxes_c = np.vstack(boxes_ts)
-    else:
-        raise NotImplementedError(
-            'Coord heur {} not supported'.format(cfg.TEST.BBOX_AUG.COORD_HEUR)
-        )
-
-    return scores_c, boxes_c, im_scales_i
+    return scores_ts, boxes_ts, im_scales_i, scores_i, boxes_i
 
 
 def im_detect_bbox_hflip(model, im, box_proposals=None):
@@ -422,8 +433,37 @@ def im_detect_mask_aug(model, im, boxes):
         'Size dependent scaling not implemented'
 
     # Collect masks computed under different transformations
-    masks_ts = []
+    masks_ts = im_detect_mask_augmentations(model, im, boxes)
 
+    # Perform mask detection in inverse
+    if cfg.TEST.MASK_AUG.INVERT:
+        im_inv = 255 - im
+        masks_ts_inv = im_detect_mask_augmentations(model, im_inv, boxes)
+        masks_ts.extend(masks_ts_inv)
+
+    # Combine the predicted soft masks
+    if cfg.TEST.MASK_AUG.HEUR == 'SOFT_AVG':
+        masks_c = np.mean(masks_ts, axis=0)
+    elif cfg.TEST.MASK_AUG.HEUR == 'SOFT_MAX':
+        masks_c = np.amax(masks_ts, axis=0)
+    elif cfg.TEST.MASK_AUG.HEUR == 'LOGIT_AVG':
+
+        def logit(y):
+            return -1.0 * np.log((1.0 - y) / np.maximum(y, 1e-20))
+
+        logit_masks = [logit(y) for y in masks_ts]
+        logit_masks = np.mean(logit_masks, axis=0)
+        masks_c = 1.0 / (1.0 + np.exp(-logit_masks))
+    else:
+        raise NotImplementedError(
+            'Heuristic {} not supported'.format(cfg.TEST.MASK_AUG.HEUR)
+        )
+
+    return masks_c
+
+
+def im_detect_mask_augmentations(model, im, boxes):
+    masks_ts = []
     # Compute masks for the original image (identity transform)
     im_scales_i = im_conv_body_only(model, im)
     masks_i = im_detect_mask(model, im_scales_i, boxes)
@@ -457,25 +497,7 @@ def im_detect_mask_aug(model, im, boxes):
             )
             masks_ts.append(masks_ar_hf)
 
-    # Combine the predicted soft masks
-    if cfg.TEST.MASK_AUG.HEUR == 'SOFT_AVG':
-        masks_c = np.mean(masks_ts, axis=0)
-    elif cfg.TEST.MASK_AUG.HEUR == 'SOFT_MAX':
-        masks_c = np.amax(masks_ts, axis=0)
-    elif cfg.TEST.MASK_AUG.HEUR == 'LOGIT_AVG':
-
-        def logit(y):
-            return -1.0 * np.log((1.0 - y) / np.maximum(y, 1e-20))
-
-        logit_masks = [logit(y) for y in masks_ts]
-        logit_masks = np.mean(logit_masks, axis=0)
-        masks_c = 1.0 / (1.0 + np.exp(-logit_masks))
-    else:
-        raise NotImplementedError(
-            'Heuristic {} not supported'.format(cfg.TEST.MASK_AUG.HEUR)
-        )
-
-    return masks_c
+    return masks_ts
 
 
 def im_detect_mask_hflip(model, im, boxes):

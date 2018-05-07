@@ -43,6 +43,7 @@ from datasets import task_evaluation
 from datasets.json_dataset import JsonDataset
 from modeling import model_builder
 from utils.blob import im_list_to_blob
+from datasets.nuclei.nuclei_utils import normalize_and_whiten
 from utils.io import save_object
 from utils.timer import Timer
 import utils.c2 as c2_utils
@@ -257,7 +258,7 @@ def evaluate_proposal_file(dataset, proposal_file, output_dir):
     return results
 
 
-def _get_image_blob(im):
+def _get_image_blob(im_in):
     """Converts an image into a network input.
 
     Arguments:
@@ -268,12 +269,15 @@ def _get_image_blob(im):
         im_scale_factors (list): list of image scales (relative to im) used
             in the image pyramid
     """
-    im_orig = im.astype(np.float32, copy=True)
+    im_orig = im_in.astype(np.float32, copy=True)
     im_orig -= cfg.PIXEL_MEANS
 
     im_shape = im_orig.shape
     im_size_min = np.min(im_shape[0:2])
     im_size_max = np.max(im_shape[0:2])
+
+    if cfg.GRAY_IMAGES:
+        im_orig = normalize_and_whiten(im_orig)
 
     processed_ims = []
 

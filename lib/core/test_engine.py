@@ -130,7 +130,9 @@ def multi_gpu_test_net_on_dataset(num_images, output_dir):
     all_boxes = [[] for _ in range(cfg.MODEL.NUM_CLASSES)]
     all_segms = [[] for _ in range(cfg.MODEL.NUM_CLASSES)]
     all_keyps = [[] for _ in range(cfg.MODEL.NUM_CLASSES)]
+    all_rois = []
     for det_data in outputs:
+        all_rois.extend(det_data['roidb'])
         all_boxes_batch = det_data['all_boxes']
         all_segms_batch = det_data['all_segms']
         all_keyps_batch = det_data['all_keyps']
@@ -145,7 +147,8 @@ def multi_gpu_test_net_on_dataset(num_images, output_dir):
             all_boxes=all_boxes,
             all_segms=all_segms,
             all_keyps=all_keyps,
-            cfg=cfg_yaml
+            cfg=cfg_yaml,
+            all_rois=all_rois
         ), det_file
     )
     logger.info('Wrote detections to: {}'.format(os.path.abspath(det_file)))
@@ -227,7 +230,7 @@ def test_net(output_dir, ind_range=None, gpu_id=0):
             im_name = os.path.splitext(os.path.basename(entry['image']))[0]
             vis_utils.vis_one_image(
                 im[:, :, ::-1],
-                '{:d}_{:s}'.format(i, im_name),
+                im_name,
                 os.path.join(output_dir, 'vis'),
                 cls_boxes_i,
                 segms=cls_segms_i,
@@ -249,7 +252,8 @@ def test_net(output_dir, ind_range=None, gpu_id=0):
             all_boxes=all_boxes,
             all_segms=all_segms,
             all_keyps=all_keyps,
-            cfg=cfg_yaml
+            cfg=cfg_yaml,
+            roidb=roidb
         ), det_file
     )
     logger.info('Wrote detections to: {}'.format(os.path.abspath(det_file)))

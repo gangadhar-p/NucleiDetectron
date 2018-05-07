@@ -111,6 +111,12 @@ __C.TRAIN.BG_THRESH_LO = 0.0
 # Use horizontally-flipped images during training?
 __C.TRAIN.USE_FLIPPED = True
 
+__C.TRAIN.USE_INVERSE = False
+__C.TRAIN.USE_AUGMENTOR = False
+__C.TRAIN.AUGMENTATION_MODE = b'SIMPLE'
+__C.TRAIN.USE_MASK_AUGMENTOR = False
+__C.TRAIN.USE_BBOX_AUGMENTOR = False
+
 # Overlap required between an RoI and a ground-truth box in order for that
 # (RoI, gt box) pair to be used as a bounding-box regression training example
 __C.TRAIN.BBOX_THRESH = 0.5
@@ -132,6 +138,11 @@ __C.TRAIN.PROPOSAL_FILES = ()
 # This feature is critical for saving memory (and makes training slightly
 # faster)
 __C.TRAIN.ASPECT_GROUPING = True
+
+
+# Make the epoch have same distribution of all image types
+__C.TRAIN.NORMALIZE_CLASSES = False
+
 
 # ---------------------------------------------------------------------------- #
 # RPN training options
@@ -188,6 +199,8 @@ __C.TRAIN.FREEZE_CONV_BODY = False
 # output directory
 __C.TRAIN.AUTO_RESUME = True
 
+__C.TRAIN.LOG_IMAGES = False
+__C.TRAIN.LOG_IMAGES_PERCENT = 0.001  # log 1 in 1000 images
 
 # ---------------------------------------------------------------------------- #
 # Data loader options
@@ -198,7 +211,8 @@ __C.DATA_LOADER = AttrDict()
 # threads can cause GIL-based interference with Python Ops leading to *slower*
 # training; 4 seems to be the sweet spot in our experience)
 __C.DATA_LOADER.NUM_THREADS = 4
-
+__C.DATA_LOADER.PROCESS_POOL_LOADER = False
+__C.DATA_LOADER.PROCESS_POOL_COUNT = 8
 
 # ---------------------------------------------------------------------------- #
 # Inference ('test') options
@@ -304,6 +318,8 @@ __C.TEST.BBOX_AUG.COORD_HEUR = b'UNION'
 # Horizontal flip at the original scale (id transform)
 __C.TEST.BBOX_AUG.H_FLIP = False
 
+__C.TEST.BBOX_AUG.INVERT = False
+
 # Each scale is the pixel size of an image's shortest side
 __C.TEST.BBOX_AUG.SCALES = ()
 
@@ -340,6 +356,8 @@ __C.TEST.MASK_AUG.HEUR = b'SOFT_AVG'
 
 # Horizontal flip at the original scale (id transform)
 __C.TEST.MASK_AUG.H_FLIP = False
+
+__C.TEST.MASK_AUG.INVERT = False
 
 # Each scale is the pixel size of an image's shortest side
 __C.TEST.MASK_AUG.SCALES = ()
@@ -908,9 +926,19 @@ __C.BBOX_XFORM_CLIP = np.log(1000. / 16.)
 # "Fun" fact: the history of where these values comes from is lost
 __C.PIXEL_MEANS = np.array([[[102.9801, 115.9465, 122.7717]]])
 
+__C.GRAY_IMAGES = False
+__C.WHITEN_IMAGES = True
+__C.COLOR_NORMALIZE = False
+
 # For reproducibility...but not really because modern fast GPU libraries use
 # non-deterministic op implementations
 __C.RNG_SEED = 3
+
+__C.RNG_WORKER_SEEDS = [7, 8, 11, 22, 26, 35, 42, 43, 48, 54, 58, 92, 100, 140, 146, 163, 165, 175, 185, 187, 188, 197, 221,
+                229, 233, 235, 239, 258, 267, 268, 269, 282, 283, 285, 299, 303, 315, 326, 336, 345, 369, 371, 387, 402,
+                408, 418, 438, 471, 501, 511, 529, 531, 538, 561, 566, 570, 588, 596, 609, 627, 644, 645, 652, 663]
+
+__C.LOG_IMAGES = False
 
 # A small number that's used many times
 __C.EPS = 1e-14
@@ -1198,3 +1226,11 @@ def _check_and_coerce_cfg_value_type(value_a, value_b, key, full_key):
             'key: {}'.format(type_b, type_a, value_b, value_a, full_key)
         )
     return value_a
+
+
+def get_worker_seed():
+    import multiprocessing
+    # set random seed per process from list of predefined seeds
+    process_ident = multiprocessing.current_process()._identity
+    worker_id = process_ident[0] if (process_ident and len(process_ident) > 0) else 1
+    return cfg.RNG_WORKER_SEEDS[worker_id -1]
