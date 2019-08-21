@@ -1,6 +1,6 @@
 # Nuclei Detectron
 
-**10th (currently 7th place while leaderboard is being updated) place solution for the 2018 Data Science Bowl with a score of 0.591 with a single model submission.**
+**7th place solution for the 2018 Data Science Bowl with a score of 0.591 with a single model submission.**
 
 Nuclei Detectron is built on [Detectorn](https://github.com/facebookresearch/Detectron) which is a [Mask R-CNN](https://arxiv.org/abs/1703.06870) based solution. This approach was chosen since Mask R-CNN works well on instance segmentation problems.
 
